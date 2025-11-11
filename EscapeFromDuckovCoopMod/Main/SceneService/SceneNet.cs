@@ -235,17 +235,20 @@ public class SceneNet : MonoBehaviour
         sceneReady.Clear();
         localReady = false;
 
+        // ✅ 在清理之前抓取一次 SceneLoaderProxy 缓存，避免随后强制刷新
+        List<SceneLoaderProxy> cachedSceneLoaders = CaptureSceneLoaderSnapshot();
+
         // ✅ 启动延迟广播协程，等待清理完成
         if (this != null && gameObject != null) // 确保对象未销毁
         {
-            StartCoroutine(BroadcastAfterCleanupCoroutine());
+            StartCoroutine(BroadcastAfterCleanupCoroutine(cachedSceneLoaders));
         }
     }
 
     /// <summary>
     /// ✅ 等待清理完成后再广播场景切换
     /// </summary>
-    private IEnumerator BroadcastAfterCleanupCoroutine()
+    private IEnumerator BroadcastAfterCleanupCoroutine(List<SceneLoaderProxy> cachedSceneLoaders)
     {
         Debug.Log("[SCENE] ========== 开始场景切换清理流程 ==========");
 
@@ -306,7 +309,7 @@ public class SceneNet : MonoBehaviour
         }
         else
         {
-            TryPerformSceneLoad_Local(sceneTargetId, sceneCurtainGuid, sceneNotifyEvac, sceneSaveToFile, sceneUseLocation, sceneLocationName);
+            TryPerformSceneLoad_Local(sceneTargetId, sceneCurtainGuid, sceneNotifyEvac, sceneSaveToFile, sceneUseLocation, sceneLocationName, cachedSceneLoaders);
         }
 
         Debug.Log("[SCENE] ========== 场景切换广播流程完成 ==========");
@@ -656,9 +659,34 @@ public class SceneNet : MonoBehaviour
         EscapeFromDuckovCoopMod.Utils.SceneTriggerResetter.ResetAllSceneTriggers();
     }
 
+    private List<SceneLoaderProxy> CaptureSceneLoaderSnapshot()
+    {
+        var cacheManager = GameObjectCacheManager.Instance;
+        if (cacheManager == null) return null;
+
+        try
+        {
+            var snapshot = new List<SceneLoaderProxy>();
+
+            foreach (var loader in cacheManager.Environment.GetCachedSceneLoaders())
+            {
+                if (!loader) continue;
+                snapshot.Add(loader);
+            }
+
+            return snapshot.Count > 0 ? snapshot : null;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[SCENE] 无法缓存 SceneLoaderProxy 列表: {ex}");
+            return null;
+        }
+    }
+
     private void TryPerformSceneLoad_Local(string targetSceneId, string curtainGuid,
         bool notifyEvac, bool save,
-        bool useLocation, string locationName)
+        bool useLocation, string locationName,
+        IEnumerable<SceneLoaderProxy> preResolvedLoaders = null)
     {
         try
         {
@@ -668,26 +696,44 @@ public class SceneNet : MonoBehaviour
             // （如果后面你把 loader.LoadScene 恢复了，这里可以先试 loader 路径并把 launched=true）
 
             // 无论 loader 是否存在，都尝试 SceneLoaderProxy 兜底
-            // ✅ 优化：使用缓存管理器获取 SceneLoaderProxy，避免 FindObjectsOfType
-            IEnumerable<SceneLoaderProxy> sceneLoaders = GameObjectCacheManager.Instance != null
-                ? GameObjectCacheManager.Instance.Environment.GetAllSceneLoaders()
-                : FindObjectsOfType<SceneLoaderProxy>();
+            // ✅ 优化：优先使用切换前缓存的 SceneLoaderProxy，避免立即刷新缓存
+            bool LaunchFromLoaders(IEnumerable<SceneLoaderProxy> sources, string context)
+            {
+                if (sources == null) return false;
 
-            foreach (var ii in sceneLoaders)
-                try
+                foreach (var proxy in sources)
                 {
-                    if (Traverse.Create(ii).Field<string>("sceneID").Value == targetSceneId)
+                    if (!proxy) continue;
+
+                    try
                     {
-                        ii.LoadScene();
-                        launched = true;
-                        Debug.Log($"[SCENE] Fallback via SceneLoaderProxy -> {targetSceneId}");
-                        break;
+                        var proxySceneId = Traverse.Create(proxy).Field<string>("sceneID").Value;
+                        if (proxySceneId == targetSceneId)
+                        {
+                            proxy.LoadScene();
+                            Debug.Log($"[SCENE] {context} -> {targetSceneId}");
+                            return true;
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogWarning($"[SCENE] {context} proxy check failed: {e}");
                     }
                 }
-                catch (Exception e)
-                {
-                    Debug.LogWarning("[SCENE] proxy check failed: " + e);
-                }
+
+                return false;
+            }
+
+            launched = LaunchFromLoaders(preResolvedLoaders, "Pre-cached SceneLoaderProxy");
+
+            if (!launched)
+            {
+                IEnumerable<SceneLoaderProxy> sceneLoaders = GameObjectCacheManager.Instance != null
+                    ? GameObjectCacheManager.Instance.Environment.GetAllSceneLoaders()
+                    : FindObjectsOfType<SceneLoaderProxy>();
+
+                launched = LaunchFromLoaders(sceneLoaders, "Fallback via SceneLoaderProxy");
+            }
 
             if (!launched) Debug.LogWarning($"[SCENE] Local load fallback failed: no proxy for '{targetSceneId}'");
         }

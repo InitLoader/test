@@ -578,6 +578,17 @@ public class EnvironmentObjectCache
         }
     }
 
+    /// <summary>
+    /// ✅ 返回当前缓存的 SceneLoaderProxy 列表，但不会触发刷新
+    /// </summary>
+    public IEnumerable<SceneLoaderProxy> GetCachedSceneLoaders()
+    {
+        foreach (var loader in _cachedSceneLoaders)
+        {
+            if (loader != null) yield return loader;
+        }
+    }
+
     public int CleanupInvalidReferences()
     {
         int count = _cachedLoaders.RemoveAll(l => !l);
