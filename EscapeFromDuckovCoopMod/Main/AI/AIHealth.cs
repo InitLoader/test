@@ -14,9 +14,15 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU Affero General Public License for more details.
 
+using System;
+using System.Collections.Generic;
+using System.Reflection;
+using Cysharp.Threading.Tasks;
 using Duckov.UI;
 using EscapeFromDuckovCoopMod.Net;  // 引入智能发送扩展方法
-using System.Reflection;
+using HarmonyLib;
+using UnityEngine;
+using UnityEngine.AI;
 
 namespace EscapeFromDuckovCoopMod;
 
@@ -41,6 +47,15 @@ public class AIHealth
     // 【优化】缓存反射方法，避免每次死亡都调用 AccessTools.DeclaredMethod
     private static readonly MethodInfo MI_GetActiveHealthBar;
     private static readonly MethodInfo MI_ReleaseHealthBar;
+    private static readonly MethodInfo MI_CmcOnDead =
+        AccessTools.DeclaredMethod(typeof(CharacterMainControl), "OnDead", new[] { typeof(DamageInfo) });
+
+    private static readonly FieldInfo FI_CmcIsDead =
+        AccessTools.Field(typeof(CharacterMainControl), "isDead") ??
+        AccessTools.Field(typeof(CharacterMainControl), "_isDead");
+
+    private static readonly PropertyInfo PI_CmcIsDead =
+        AccessTools.Property(typeof(CharacterMainControl), "IsDead");
 
     // 【优化】静态构造函数，初始化时缓存反射方法
     static AIHealth()
@@ -67,6 +82,234 @@ public class AIHealth
     private readonly Dictionary<int, float> _cliLastAiHp = new();
     private readonly Dictionary<int, float> _cliLastReportedHp = new();
     private readonly Dictionary<int, float> _cliNextReportAt = new();
+    private readonly HashSet<int> _srvProcessedAiDeaths = new();
+
+    private static bool IsCharacterMarkedDead(CharacterMainControl cmc)
+    {
+        if (!cmc) return false;
+
+        try
+        {
+            if (PI_CmcIsDead != null)
+            {
+                var value = PI_CmcIsDead.GetValue(cmc);
+                if (value is bool b) return b;
+            }
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            if (FI_CmcIsDead != null)
+            {
+                var value = FI_CmcIsDead.GetValue(cmc);
+                if (value is bool b) return b;
+            }
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            return cmc.Health != null && cmc.Health.IsDead;
+        }
+        catch
+        {
+        }
+
+        return false;
+    }
+
+    private static void EnsureAiMovementStopped(CharacterMainControl cmc)
+    {
+        if (!cmc) return;
+
+        try
+        {
+            cmc.enabled = false;
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            var aiController = cmc.GetComponent<AICharacterController>();
+            if (aiController) aiController.enabled = false;
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            var follower = cmc.GetComponent<NetAiFollower>();
+            if (follower) follower.enabled = false;
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            var nav = cmc.GetComponent<NavMeshAgent>();
+            if (nav)
+            {
+                nav.isStopped = true;
+                nav.ResetPath();
+                nav.enabled = false;
+            }
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            var cc = cmc.GetComponent<CharacterController>();
+            if (cc) cc.enabled = false;
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            var rb = cmc.GetComponent<Rigidbody>();
+            if (rb)
+            {
+                rb.velocity = Vector3.zero;
+                rb.angularVelocity = Vector3.zero;
+                rb.isKinematic = true;
+            }
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            var anim = cmc.GetComponentInChildren<Animator>(true);
+            if (anim) anim.applyRootMotion = false;
+        }
+        catch
+        {
+        }
+    }
+
+    private DamageInfo BuildServerKillDamageInfo(CharacterMainControl cmc, float applyMax, NetPeer sender)
+    {
+        var di = new DamageInfo();
+
+        try
+        {
+            di.damageValue = Mathf.Max(1f, applyMax > 0f ? applyMax : 1f);
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            di.finalDamage = di.damageValue;
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            if (cmc)
+                di.damagePoint = cmc.transform.position;
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            di.damageNormal = Vector3.up;
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            if (cmc) di.toDamageReceiver = cmc.mainDamageReceiver;
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            if (playerStatuses != null && sender != null && playerStatuses.TryGetValue(sender, out var st) && st != null)
+                di.fromCharacter = CharacterMainControl.Main;
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            if (!di.fromCharacter)
+                di.fromCharacter = CharacterMainControl.Main;
+        }
+        catch
+        {
+        }
+
+        return di;
+    }
+
+    private static bool TryKillViaHurt(Health h, DamageInfo di)
+    {
+        if (!h) return false;
+
+        try
+        {
+            h.Hurt(di);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void FireServerDeathCallbacks(CharacterMainControl cmc, DamageInfo di)
+    {
+        if (!cmc) return;
+
+        try
+        {
+            cmc.Health.OnDeadEvent?.Invoke(di);
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            AITool.TryFireOnDead(cmc.Health, di);
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            if (MI_CmcOnDead != null && !IsCharacterMarkedDead(cmc))
+                MI_CmcOnDead.Invoke(cmc, new object[] { di });
+        }
+        catch
+        {
+        }
+    }
 
     // 🛡️ 日志频率限制
     private static int _pendingAiWarningCount = 0;
@@ -163,82 +406,48 @@ public class AIHealth
         {
         }
 
-        HealthM.Instance.ForceSetHealth(h, applyMax, clampedCur, false);
+        var firstDeathReport = false;
+        if (clampedCur <= 0f)
+        {
+            firstDeathReport = _srvProcessedAiDeaths.Add(aiId);
+        }
+        else
+        {
+            _srvProcessedAiDeaths.Remove(aiId);
+        }
+
+        var appliedCur = clampedCur;
+
+        if (clampedCur <= 0f)
+        {
+            if (!wasDead || firstDeathReport)
+            {
+                var di = BuildServerKillDamageInfo(cmc, applyMax, sender);
+                if (!TryKillViaHurt(h, di))
+                {
+                    HealthM.Instance.ForceSetHealth(h, applyMax, 0f, false);
+                    FireServerDeathCallbacks(cmc, di);
+                }
+
+                appliedCur = 0f;
+            }
+            else
+            {
+                HealthM.Instance.ForceSetHealth(h, applyMax, 0f, false);
+                appliedCur = 0f;
+            }
+
+            EnsureAiMovementStopped(cmc);
+        }
+        else
+        {
+            HealthM.Instance.ForceSetHealth(h, applyMax, clampedCur, false);
+        }
 
         if (ModBehaviourF.LogAiHpDebug)
-            Debug.Log($"[AI-HP][SERVER] apply report aiId={aiId} max={applyMax} cur={clampedCur} from={sender?.EndPoint}");
+            Debug.Log($"[AI-HP][SERVER] apply report aiId={aiId} max={applyMax} cur={appliedCur} from={sender?.EndPoint}");
 
-        Server_BroadcastAiHealth(aiId, applyMax, clampedCur);
-
-        if (clampedCur <= 0f && !wasDead)
-        {
-            var di = new DamageInfo();
-
-            try
-            {
-                di.damageValue = Mathf.Max(1f, applyMax > 0f ? applyMax : 1f);
-            }
-            catch
-            {
-            }
-
-            try
-            {
-                di.finalDamage = di.damageValue;
-            }
-            catch
-            {
-            }
-
-            try
-            {
-                di.damagePoint = cmc.transform.position;
-            }
-            catch
-            {
-            }
-
-            try
-            {
-                di.damageNormal = Vector3.up;
-            }
-            catch
-            {
-            }
-
-            try
-            {
-                di.toDamageReceiver = cmc.mainDamageReceiver;
-            }
-            catch
-            {
-            }
-
-            try
-            {
-                if (playerStatuses != null && sender != null && playerStatuses.TryGetValue(sender, out var st) && st != null)
-                    di.fromCharacter = CharacterMainControl.Main;
-            }
-            catch
-            {
-            }
-
-            try
-            {
-                cmc.Health.OnDeadEvent?.Invoke(di);
-            }
-            catch
-            {
-            }
-
-            try
-            {
-                AITool.TryFireOnDead(cmc.Health, di);
-            }
-            catch
-            {
-            }
-        }
+        Server_BroadcastAiHealth(aiId, applyMax, appliedCur);
     }
 
 
@@ -401,15 +610,7 @@ public class AIHealth
         // 死亡则本地立即隐藏，防"幽灵AI"
         if (cur <= 0f)
         {
-            // 【优化】先禁用 AI 控制器（立即生效），其他清理操作延迟执行
-            try
-            {
-                var ai = cmc.GetComponent<AICharacterController>();
-                if (ai) ai.enabled = false;
-            }
-            catch
-            {
-            }
+            EnsureAiMovementStopped(cmc);
 
             // 【优化】延迟清理操作，避免死亡瞬间卡顿
             UniTask.Void(async () =>
