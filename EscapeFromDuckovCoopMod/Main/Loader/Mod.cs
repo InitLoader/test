@@ -651,9 +651,6 @@ public partial class ModBehaviourF : MonoBehaviour
                 LootManager.Instance._cliPendingTake.Clear();
             }
 
-            // ✅ 清理 Inventory 缓存（墓碑/有效箱子）
-            LootboxDetectUtil.ClearInventoryCaches();
-
             // 3. 清理掉落物品
             Debug.Log("[MOD-Cleanup] 清理掉落物品...");
             ItemTool.serverDroppedItems.Clear();
