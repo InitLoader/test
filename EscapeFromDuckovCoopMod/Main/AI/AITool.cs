@@ -165,6 +165,9 @@ public static class AITool
         if (!cmc.gameObject.activeInHierarchy || !cmc.enabled)
             return false;
 
+        if (AIHealth.IsCharacterMarkedDead(cmc))
+            return false;
+
         var model = cmc.characterModel;
         if (model && !model.gameObject.activeInHierarchy)
             return false;

@@ -71,7 +71,14 @@ public class AIHandle
     // 待绑定时的暂存（客户端）
     private readonly Dictionary<int, AiAnimState> _pendingAiAnims = new();
     public readonly Dictionary<int, int> aiRootSeeds = new(); // rootId -> seed
+
+    private const float AI_SYNC_DISTANCE = 140f;
+    private const float AI_SYNC_DISTANCE_SQR = AI_SYNC_DISTANCE * AI_SYNC_DISTANCE;
+
     private readonly List<(int id, Vector3 pos, Vector3 dir)> _serverActiveAiBuffer = new();
+    private readonly List<(int id, AiAnimState st)> _serverAnimSnapshotBuffer = new();
+    private readonly List<Vector3> _playerPositionBuffer = new();
+    private readonly HashSet<int> _serverDeadAi = new();
 
     public readonly Dictionary<int, (
         List<(int slot, int tid)> equips,
@@ -459,6 +466,21 @@ public class AIHandle
         if (!AITool.IsRealAI(cmc)) return;
         AITool.aiById[aiId] = cmc;
 
+        if (cmc)
+        {
+            try
+            {
+                var tag = cmc.GetComponent<NetAiTag>();
+                if (!tag) tag = cmc.gameObject.AddComponent<NetAiTag>();
+                tag.aiId = aiId;
+            }
+            catch
+            {
+            }
+        }
+
+        _serverDeadAi.Remove(aiId);
+
         // 【优化】快速路径：仅注册ID映射，其他操作延后处理
         float pendCur = -1f, pendMax = -1f;
         if (_cliPendingAiHealth.TryGetValue(aiId, out var pc))
@@ -536,16 +558,6 @@ public class AIHandle
             // 客户端兴趣圈可见性
             if (!cmc.GetComponent<NetAiVisibilityGuard>())
                 cmc.gameObject.AddComponent<NetAiVisibilityGuard>();
-
-            try
-            {
-                var tag = cmc.GetComponent<NetAiTag>();
-                if (tag == null) tag = cmc.gameObject.AddComponent<NetAiTag>();
-                if (tag.aiId != aiId) tag.aiId = aiId;
-            }
-            catch
-            {
-            }
 
             if (!cmc.GetComponent<RemoteReplicaTag>()) cmc.gameObject.AddComponent<RemoteReplicaTag>();
 
@@ -1111,19 +1123,116 @@ public class AIHandle
     }
 
 
+    private void CollectPlayerPositions()
+    {
+        _playerPositionBuffer.Clear();
+
+        try
+        {
+            var main = CharacterMainControl.Main;
+            if (main)
+                _playerPositionBuffer.Add(main.transform.position);
+        }
+        catch
+        {
+        }
+
+        if (remoteCharacters != null)
+        {
+            foreach (var go in remoteCharacters.Values)
+            {
+                if (!go) continue;
+                try
+                {
+                    _playerPositionBuffer.Add(go.transform.position);
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        if (_playerPositionBuffer.Count == 0 && playerStatuses != null)
+        {
+            foreach (var st in playerStatuses.Values)
+            {
+                if (st == null) continue;
+                _playerPositionBuffer.Add(st.Position);
+            }
+        }
+    }
+
+    private bool ShouldSyncAi(CharacterMainControl cmc, Vector3 position)
+    {
+        if (!cmc) return false;
+        if (AIHealth.IsCharacterMarkedDead(cmc)) return false;
+
+        if (_playerPositionBuffer.Count == 0) return true;
+
+        foreach (var pos in _playerPositionBuffer)
+        {
+            var delta = pos - position;
+            if (delta.sqrMagnitude <= AI_SYNC_DISTANCE_SQR)
+                return true;
+        }
+
+        return false;
+    }
+
+    public void Server_OnAiDeathConfirmed(int aiId, CharacterMainControl cmc)
+    {
+        if (!IsServer) return;
+
+        var resolvedId = aiId;
+        if (resolvedId == 0)
+        {
+            try
+            {
+                var tag = cmc ? cmc.GetComponent<NetAiTag>() : null;
+                if (tag != null && tag.aiId != 0)
+                    resolvedId = tag.aiId;
+            }
+            catch
+            {
+            }
+
+            if (resolvedId == 0 && cmc)
+            {
+                foreach (var kv in AITool.aiById)
+                {
+                    if (kv.Value == cmc)
+                    {
+                        resolvedId = kv.Key;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (resolvedId == 0) return;
+
+        _serverDeadAi.Add(resolvedId);
+
+        if (cmc)
+            AIHealth.EnsureAiMovementStopped(cmc);
+    }
+
     public void Server_BroadcastAiTransforms()
     {
         if (!IsServer || AITool.aiById.Count == 0) return;
 
+        CollectPlayerPositions();
         _serverActiveAiBuffer.Clear();
         foreach (var kv in AITool.aiById)
         {
             var cmc = kv.Value;
             if (!cmc) continue;
             if (!AITool.IsAiActiveForSync(cmc)) continue;
+            if (_serverDeadAi.Contains(kv.Key)) continue;
             var t = cmc.transform;
             var model = cmc.characterModel;
             var fwd = model ? model.transform.forward : t.forward;
+            if (!ShouldSyncAi(cmc, t.position)) continue;
             _serverActiveAiBuffer.Add((kv.Key, t.position, fwd));
         }
 
@@ -1147,7 +1256,8 @@ public class AIHandle
     {
         if (!IsServer || AITool.aiById == null || AITool.aiById.Count == 0) return;
 
-        var list = new List<(int id, AiAnimState st)>(AITool.aiById.Count);
+        CollectPlayerPositions();
+        _serverAnimSnapshotBuffer.Clear();
         foreach (var kv in AITool.aiById)
         {
             var id = kv.Key;
@@ -1155,10 +1265,14 @@ public class AIHandle
             if (!cmc) continue;
 
             if (!AITool.IsAiActiveForSync(cmc)) continue;
+            if (_serverDeadAi.Contains(id)) continue;
 
             var magic = cmc.GetComponentInChildren<CharacterAnimationControl_MagicBlend>(true);
             var anim = magic ? magic.animator : cmc.GetComponentInChildren<Animator>(true);
             if (!anim || !anim.isActiveAndEnabled || !anim.gameObject.activeInHierarchy) continue;
+
+            var position = cmc.transform.position;
+            if (!ShouldSyncAi(cmc, position)) continue;
 
             var st = new AiAnimState
             {
@@ -1169,10 +1283,10 @@ public class AIHandle
                 gunReady = anim.GetBool(Animator.StringToHash("GunReady")),
                 dashing = anim.GetBool(Animator.StringToHash("Dashing"))
             };
-            list.Add((id, st));
+            _serverAnimSnapshotBuffer.Add((id, st));
         }
 
-        if (list.Count == 0) return;
+        if (_serverAnimSnapshotBuffer.Count == 0) return;
 
         // —— 发送（保持你原来的分包逻辑）——
         const DeliveryMethod METHOD = DeliveryMethod.Unreliable;
@@ -1191,16 +1305,16 @@ public class AIHandle
         var budget = Math.Max(256, maxSingle - HEADER);
         var perPacket = Math.Max(1, budget / ENTRY);
 
-        for (var i = 0; i < list.Count; i += perPacket)
+        for (var i = 0; i < _serverAnimSnapshotBuffer.Count; i += perPacket)
         {
-            var n = Math.Min(perPacket, list.Count - i);
+            var n = Math.Min(perPacket, _serverAnimSnapshotBuffer.Count - i);
 
             writer.Reset();
             writer.Put((byte)Op.AI_ANIM_SNAPSHOT);
             writer.Put(n);
             for (var j = 0; j < n; ++j)
             {
-                var e = list[i + j];
+                var e = _serverAnimSnapshotBuffer[i + j];
                 writer.Put(e.id);
                 writer.Put(e.st.speed);
                 writer.Put(e.st.dirX);
@@ -1212,6 +1326,8 @@ public class AIHandle
 
             netManager.SendToAll(writer, METHOD);
         }
+
+        _serverAnimSnapshotBuffer.Clear();
     }
 
     // 客户端：应用增量，不清空，直接补/改

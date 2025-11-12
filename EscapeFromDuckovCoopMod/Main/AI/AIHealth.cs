@@ -84,7 +84,7 @@ public class AIHealth
     private readonly Dictionary<int, float> _cliNextReportAt = new();
     private readonly HashSet<int> _srvProcessedAiDeaths = new();
 
-    private static bool IsCharacterMarkedDead(CharacterMainControl cmc)
+    internal static bool IsCharacterMarkedDead(CharacterMainControl cmc)
     {
         if (!cmc) return false;
 
@@ -123,7 +123,7 @@ public class AIHealth
         return false;
     }
 
-    private static void EnsureAiMovementStopped(CharacterMainControl cmc)
+    internal static void EnsureAiMovementStopped(CharacterMainControl cmc)
     {
         if (!cmc) return;
 
@@ -247,8 +247,16 @@ public class AIHealth
 
         try
         {
-            if (playerStatuses != null && sender != null && playerStatuses.TryGetValue(sender, out var st) && st != null)
+            if (remoteCharacters != null && sender != null && remoteCharacters.TryGetValue(sender, out var go) && go)
+            {
+                var remoteCmc = go.GetComponent<CharacterMainControl>();
+                if (remoteCmc)
+                    di.fromCharacter = remoteCmc;
+            }
+            else if (!di.fromCharacter && playerStatuses != null && sender != null && playerStatuses.TryGetValue(sender, out _))
+            {
                 di.fromCharacter = CharacterMainControl.Main;
+            }
         }
         catch
         {
@@ -438,6 +446,17 @@ public class AIHealth
             }
 
             EnsureAiMovementStopped(cmc);
+
+            if (IsServer)
+            {
+                try
+                {
+                    COOPManager.AIHandle?.Server_OnAiDeathConfirmed(aiId, cmc);
+                }
+                catch
+                {
+                }
+            }
         }
         else
         {
