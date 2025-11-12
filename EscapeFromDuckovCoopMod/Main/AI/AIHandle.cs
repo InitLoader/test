@@ -16,6 +16,7 @@
 
 using EscapeFromDuckovCoopMod.Net;
 using EscapeFromDuckovCoopMod.Utils; // 【修复】明确指定使用非泛型 IEnumerator
+using System.Collections.Generic;
 using System.Reflection;
 using Unity.Collections;
 using Unity.Jobs;
@@ -70,6 +71,7 @@ public class AIHandle
     // 待绑定时的暂存（客户端）
     private readonly Dictionary<int, AiAnimState> _pendingAiAnims = new();
     public readonly Dictionary<int, int> aiRootSeeds = new(); // rootId -> seed
+    private readonly List<(int id, Vector3 pos, Vector3 dir)> _serverActiveAiBuffer = new();
 
     public readonly Dictionary<int, (
         List<(int slot, int tid)> equips,
@@ -1113,26 +1115,32 @@ public class AIHandle
     {
         if (!IsServer || AITool.aiById.Count == 0) return;
 
-        writer.Reset();
-        writer.Put((byte)Op.AI_TRANSFORM_SNAPSHOT);
-        // 统计有效数量
-        var cnt = 0;
-        foreach (var kv in AITool.aiById)
-            if (kv.Value)
-                cnt++;
-        writer.Put(cnt);
+        _serverActiveAiBuffer.Clear();
         foreach (var kv in AITool.aiById)
         {
             var cmc = kv.Value;
             if (!cmc) continue;
+            if (!AITool.IsAiActiveForSync(cmc)) continue;
             var t = cmc.transform;
-            writer.Put(kv.Key); // aiId
-            writer.PutV3cm(t.position); // 压缩位置
-            var fwd = cmc.characterModel.transform.rotation * Vector3.forward;
-            writer.PutDir(fwd);
+            var model = cmc.characterModel;
+            var fwd = model ? model.transform.forward : t.forward;
+            _serverActiveAiBuffer.Add((kv.Key, t.position, fwd));
+        }
+
+        if (_serverActiveAiBuffer.Count == 0) return;
+
+        writer.Reset();
+        writer.Put((byte)Op.AI_TRANSFORM_SNAPSHOT);
+        writer.Put(_serverActiveAiBuffer.Count);
+        foreach (var entry in _serverActiveAiBuffer)
+        {
+            writer.Put(entry.id); // aiId
+            writer.PutV3cm(entry.pos); // 压缩位置
+            writer.PutDir(entry.dir);
         }
 
         CoopTool.BroadcastReliable(writer);
+        _serverActiveAiBuffer.Clear();
     }
 
     public void Server_BroadcastAiAnimations()
@@ -1146,11 +1154,7 @@ public class AIHandle
             var cmc = kv.Value;
             if (!cmc) continue;
 
-            // ① 必须是真正的 AI，且存活
-            if (!AITool.IsRealAI(cmc)) continue; // 你工程里已有这个工具方法
-
-            // ② GameObject/组件必须处于激活状态
-            if (!cmc.gameObject.activeInHierarchy || !cmc.enabled) continue;
+            if (!AITool.IsAiActiveForSync(cmc)) continue;
 
             var magic = cmc.GetComponentInChildren<CharacterAnimationControl_MagicBlend>(true);
             var anim = magic ? magic.animator : cmc.GetComponentInChildren<Animator>(true);

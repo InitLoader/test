@@ -157,6 +157,81 @@ public static class AITool
         return true;
     }
 
+    public static bool IsAiActiveForSync(CharacterMainControl cmc)
+    {
+        if (!IsRealAI(cmc)) return false;
+        if (!cmc) return false;
+
+        if (!cmc.gameObject.activeInHierarchy || !cmc.enabled)
+            return false;
+
+        var model = cmc.characterModel;
+        if (model && !model.gameObject.activeInHierarchy)
+            return false;
+
+        try
+        {
+            var root = cmc.GetComponentInParent<CharacterSpawnerRoot>(true);
+            if (root && !root.gameObject.activeInHierarchy)
+                return false;
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            if (cmc.TryGetComponent<AICharacterController>(out var aic))
+                if (!aic || !aic.isActiveAndEnabled)
+                    return false;
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            if (cmc.TryGetComponent<BehaviourTreeOwner>(out var bto))
+                if (!bto || !bto.isActiveAndEnabled)
+                    return false;
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            if (cmc.TryGetComponent<FSMOwner>(out var fsm))
+                if (!fsm || !fsm.isActiveAndEnabled)
+                    return false;
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            if (cmc.TryGetComponent<AI_PathControl>(out var path))
+                if (!path || !path.isActiveAndEnabled)
+                    return false;
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            if (cmc.TryGetComponent<UnityEngine.AI.NavMeshAgent>(out var nav))
+                if (!nav || !nav.enabled)
+                    return false;
+        }
+        catch
+        {
+        }
+
+        return true;
+    }
+
     public static CharacterMainControl TryAutoBindAi(int aiId, Vector3 snapPos)
     {
         var best = 30f; // 原 5f -> 放宽，必要时可调到 40f
