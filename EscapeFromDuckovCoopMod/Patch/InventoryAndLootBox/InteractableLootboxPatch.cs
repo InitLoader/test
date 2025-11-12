@@ -181,8 +181,23 @@ internal static class Patch_Lootbox_CreateFromItem_DeferredSpawn
     {
         var mod = ModBehaviourF.Instance;
         var dead = DeadLootSpawnContext.InOnDead;
-        if (mod == null || !mod.networkStarted || !mod.IsServer) return;
-        if (dead == null || !__result) return;
+        if (mod == null || !mod.networkStarted || !__result) return;
+
+        var inv = __result.Inventory;
+        if (dead != null && inv)
+        {
+            try
+            {
+                LootboxDetectUtil.MarkLootboxInventory(inv);
+                LootSearchWorldGate.TrySetNeedInspection(inv, true);
+                LootSearchWorldGate.ForceTopLevelUninspected(inv);
+            }
+            catch
+            {
+            }
+        }
+
+        if (!mod.IsServer || dead == null) return;
 
         mod.StartCoroutine(DeferredSpawn(__result, dead));
     }
