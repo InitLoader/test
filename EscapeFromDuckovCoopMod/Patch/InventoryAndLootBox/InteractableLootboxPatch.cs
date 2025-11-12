@@ -15,6 +15,7 @@
 // GNU Affero General Public License for more details.
 
 using System.Collections;
+using EscapeFromDuckovCoopMod.Utils;
 using ItemStatsSystem;
 
 namespace EscapeFromDuckovCoopMod;
@@ -217,9 +218,6 @@ internal static class Patch_Lootbox_CreateFromItem_Register
     {
         try
         {
-            return;
-            //之前排查击杀卡顿ret了的，优化好了一点之后就忘记放行了好像也不会影响正常的东西，能用就先别管：）
-
             if (!__result) return;
             var inv = __result.Inventory;
             if (!inv) return;
@@ -230,6 +228,18 @@ internal static class Patch_Lootbox_CreateFromItem_Register
 
             var dict = InteractableLootbox.Inventories;
             if (dict != null) dict[key] = inv;
+
+            var lootManager = LootManager.Instance;
+            if (lootManager != null)
+            {
+                lootManager.RegisterLootbox(__result);
+            }
+
+            var cacheManager = GameObjectCacheManager.Instance;
+            if (cacheManager != null)
+            {
+                cacheManager.Loot?.RegisterLootbox(__result);
+            }
         }
         catch
         {

@@ -709,6 +709,26 @@ public class LootManager : MonoBehaviour
         return null;
     }
 
+    public void RegisterLootbox(InteractableLootbox box)
+    {
+        if (!box) return;
+
+        var inv = box.Inventory;
+        if (!inv) return;
+
+        _invToLootboxCache[inv] = box;
+
+        try
+        {
+            _invToPosKeyCache[inv] = ComputeLootKey(box.transform);
+        }
+        catch
+        {
+        }
+
+        _lastLootboxCacheUpdate = Time.time;
+    }
+
     /// <summary>
     /// ✅ 优化：刷新 InteractableLootbox 缓存
     /// </summary>
