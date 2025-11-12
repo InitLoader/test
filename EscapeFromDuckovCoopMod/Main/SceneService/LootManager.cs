@@ -223,6 +223,42 @@ public static class LootboxDetectUtil
     /// 普通箱子：Inventory 在独立的 GameObject 上（通过 GetOrCreateInventory 创建）
     /// 墓碑：Inventory 直接在墓碑 GameObject 上（通过 CreateLocalInventory 创建）
     /// </summary>
+    public static void MarkLootboxInventory(Inventory inv)
+    {
+        if (inv == null) return;
+
+        lock (_cacheLock)
+        {
+            _validLootboxInventories.Add(inv);
+            _tombInventories.Remove(inv);
+        }
+    }
+
+    private static bool LooksLikeDeadLootbox(InteractableLootbox lootbox)
+    {
+        if (lootbox == null) return false;
+
+        try
+        {
+            var go = lootbox.gameObject;
+            var name = go ? go.name : lootbox.name;
+            if (string.IsNullOrEmpty(name)) return false;
+
+            name = name.ToLowerInvariant();
+
+            if (name.Contains("enemydie") || name.Contains("enemy_die") || name.Contains("enemydead") || name.Contains("deadloot"))
+                return true;
+
+            if (name.Contains("tomb") || name.Contains("grave"))
+                return false;
+        }
+        catch
+        {
+        }
+
+        return false;
+    }
+
     public static bool IsLootboxInventory(Inventory inv)
     {
         _totalChecks++;
@@ -280,6 +316,12 @@ public static class LootboxDetectUtil
             var lootbox = inv.GetComponent<InteractableLootbox>();
             if (lootbox != null)
             {
+                if (DeadLootSpawnContext.InOnDead != null || LooksLikeDeadLootbox(lootbox))
+                {
+                    MarkLootboxInventory(inv);
+                    return true;
+                }
+
                 // ✅ Inventory 和 InteractableLootbox 在同一个 GameObject 上
                 // 这说明是墓碑（通过 CreateLocalInventory 创建）
                 lock (_cacheLock)
