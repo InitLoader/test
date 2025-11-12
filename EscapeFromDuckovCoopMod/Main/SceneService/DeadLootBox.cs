@@ -66,6 +66,13 @@ public class DeadLootBox : MonoBehaviour
         var inv = box.Inventory;
         if (!inv) yield break;
 
+        var lootManager = LootManager.Instance;
+        if (lootManager != null)
+        {
+            lootManager.RegisterLootbox(box);
+            lootManager.RememberLootUid(inv, lootUid);
+        }
+
         LootboxDetectUtil.MarkLootboxInventory(inv);
         WorldLootPrime.PrimeIfClient(box);
         yield return null;
@@ -200,6 +207,13 @@ public class DeadLootBox : MonoBehaviour
             var inv = box.Inventory;
             if (inv) LootManager.Instance._srvLootByUid[lootUid] = inv;
 
+            var lootManager = LootManager.Instance;
+            if (lootManager != null)
+            {
+                lootManager.RegisterLootbox(box);
+                lootManager.RememberLootUid(inv, lootUid);
+            }
+
             var aiId = 0;
             if (whoDied)
             {
@@ -277,6 +291,7 @@ public class DeadLootBox : MonoBehaviour
             {
                 LootboxDetectUtil.MarkLootboxInventory(inv);
                 LootManager.Instance._srvLootByUid[lootUid] = inv;
+                LootManager.Instance.RememberLootUid(inv, lootUid);
             }
 
             // ★ 新增：抑制“填充期间”的 AddItem 广播

@@ -716,17 +716,70 @@ public class LootManager : MonoBehaviour
         var inv = box.Inventory;
         if (!inv) return;
 
+        // 立刻将容器标记为有效战利品，避免在填充初期被误判为墓碑而被跳过同步
+        LootboxDetectUtil.MarkLootboxInventory(inv);
+
+        // 主缓存：Inventory -> Lootbox 实例
         _invToLootboxCache[inv] = box;
 
+        // 计算并缓存位置 Key（供网络 ID 使用）
+        var keyComputed = false;
+        var posKey = -1;
         try
         {
-            _invToPosKeyCache[inv] = ComputeLootKey(box.transform);
+            posKey = ComputeLootKey(box.transform);
+            _invToPosKeyCache[inv] = posKey;
+            keyComputed = true;
+        }
+        catch
+        {
+        }
+
+        // 确保全局字典中使用正确的 key，修正可能的旧键值
+        try
+        {
+            var dict = InteractableLootbox.Inventories;
+            if (dict != null)
+            {
+                if (!keyComputed)
+                {
+                    posKey = ComputeLootKey(box.transform);
+                    _invToPosKeyCache[inv] = posKey;
+                    keyComputed = true;
+                }
+
+                var wrongKey = -1;
+                foreach (var kv in dict)
+                    if (kv.Value == inv && kv.Key != posKey)
+                    {
+                        wrongKey = kv.Key;
+                        break;
+                    }
+
+                if (wrongKey != -1) dict.Remove(wrongKey);
+                dict[posKey] = inv;
+            }
+        }
+        catch
+        {
+        }
+
+        // 注册到全局缓存，避免下一次刷新扫描整个场景
+        try
+        {
+            Utils.GameObjectCacheManager.Instance?.Loot?.RegisterLootbox(box);
         }
         catch
         {
         }
 
         _lastLootboxCacheUpdate = Time.time;
+    }
+
+    public void RememberLootUid(Inventory inv, int lootUid)
+    {
+        if (!inv || lootUid <= 0) return;
+        _invToUidCache[inv] = lootUid;
     }
 
     /// <summary>

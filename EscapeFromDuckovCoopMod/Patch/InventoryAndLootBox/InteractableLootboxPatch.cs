@@ -222,23 +222,10 @@ internal static class Patch_Lootbox_CreateFromItem_Register
             var inv = __result.Inventory;
             if (!inv) return;
 
-            var key = ModBehaviourF.Instance != null
-                ? LootManager.Instance.ComputeLootKey(__result.transform)
-                : __result.GetHashCode(); // 兜底
-
-            var dict = InteractableLootbox.Inventories;
-            if (dict != null) dict[key] = inv;
-
             var lootManager = LootManager.Instance;
             if (lootManager != null)
             {
                 lootManager.RegisterLootbox(__result);
-            }
-
-            var cacheManager = GameObjectCacheManager.Instance;
-            if (cacheManager != null)
-            {
-                cacheManager.Loot?.RegisterLootbox(__result);
             }
         }
         catch
