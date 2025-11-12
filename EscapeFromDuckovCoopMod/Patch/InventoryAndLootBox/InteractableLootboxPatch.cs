@@ -15,7 +15,6 @@
 // GNU Affero General Public License for more details.
 
 using System.Collections;
-using EscapeFromDuckovCoopMod.Utils;
 using ItemStatsSystem;
 
 namespace EscapeFromDuckovCoopMod;
@@ -182,23 +181,8 @@ internal static class Patch_Lootbox_CreateFromItem_DeferredSpawn
     {
         var mod = ModBehaviourF.Instance;
         var dead = DeadLootSpawnContext.InOnDead;
-        if (mod == null || !mod.networkStarted || !__result) return;
-
-        var inv = __result.Inventory;
-        if (dead != null && inv)
-        {
-            try
-            {
-                LootboxDetectUtil.MarkLootboxInventory(inv);
-                LootSearchWorldGate.TrySetNeedInspection(inv, true);
-                LootSearchWorldGate.ForceTopLevelUninspected(inv);
-            }
-            catch
-            {
-            }
-        }
-
-        if (!mod.IsServer || dead == null) return;
+        if (mod == null || !mod.networkStarted || !mod.IsServer) return;
+        if (dead == null || !__result) return;
 
         mod.StartCoroutine(DeferredSpawn(__result, dead));
     }
@@ -218,15 +202,19 @@ internal static class Patch_Lootbox_CreateFromItem_Register
     {
         try
         {
+            return;
+            //之前排查击杀卡顿ret了的，优化好了一点之后就忘记放行了好像也不会影响正常的东西，能用就先别管：）
+
             if (!__result) return;
             var inv = __result.Inventory;
             if (!inv) return;
 
-            var lootManager = LootManager.Instance;
-            if (lootManager != null)
-            {
-                lootManager.RegisterLootbox(__result);
-            }
+            var key = ModBehaviourF.Instance != null
+                ? LootManager.Instance.ComputeLootKey(__result.transform)
+                : __result.GetHashCode(); // 兜底
+
+            var dict = InteractableLootbox.Inventories;
+            if (dict != null) dict[key] = inv;
         }
         catch
         {

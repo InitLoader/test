@@ -108,40 +108,6 @@ internal static class Patch_CMC_OnDead_Mark
 }
 
 [HarmonyPatch(typeof(CharacterMainControl), "OnDead")]
-internal static class Patch_CMC_OnDead_StopAiMovement
-{
-    private static void Postfix(CharacterMainControl __instance)
-    {
-        var mod = ModBehaviourF.Instance;
-        if (mod == null || !mod.networkStarted) return;
-        if (!__instance) return;
-        if (!ComponentCache.IsAI(__instance)) return;
-
-        AIHealth.EnsureAiMovementStopped(__instance);
-
-        if (!mod.IsServer) return;
-
-        var aiId = 0;
-        try
-        {
-            var tag = __instance.GetComponent<NetAiTag>();
-            if (tag != null) aiId = tag.aiId;
-        }
-        catch
-        {
-        }
-
-        try
-        {
-            COOPManager.AIHandle?.Server_OnAiDeathConfirmed(aiId, __instance);
-        }
-        catch
-        {
-        }
-    }
-}
-
-[HarmonyPatch(typeof(CharacterMainControl), "OnDead")]
 internal static class Patch_Client_OnDead_ReportCorpseTree
 {
     private static void Postfix(CharacterMainControl __instance)

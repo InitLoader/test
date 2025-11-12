@@ -739,38 +739,6 @@ public class LootObjectCache
         }
     }
 
-    public void RegisterLootbox(InteractableLootbox box)
-    {
-        if (!box) return;
-
-        EnsureInventoryDelegateInitialized();
-
-        if (!_allLootboxes.Contains(box))
-        {
-            _allLootboxes.Add(box);
-        }
-
-        try
-        {
-            var inv = _getInventoryRefDelegate(box);
-            if (!inv)
-            {
-                inv = box.Inventory;
-            }
-
-            if (inv)
-            {
-                _lootboxByInv[inv] = box;
-            }
-        }
-        catch (Exception ex)
-        {
-            Debug.LogWarning($"[LootCache] 登记战利品箱失败: {ex.Message}");
-        }
-
-        _lastRefreshTime = Time.time;
-    }
-
     /// <summary>
     /// ✅ 协程版本：分帧刷新缓存，避免大型地图（760+箱子）导致主线程阻塞
     /// 每处理50个箱子后 yield 一次，分散到多帧处理

@@ -506,7 +506,6 @@ public static class LootFullSyncMessage
         if (lootManager != null && boxInfo.lootUid >= 0)
         {
             lootManager._cliLootByUid[boxInfo.lootUid] = inventory;
-            lootManager.RememberLootUid(inventory, boxInfo.lootUid);
         }
 
         Debug.Log($"[LootFullSync] 应用战利品箱: lootUid={boxInfo.lootUid}, items={boxInfo.items.Length}");
