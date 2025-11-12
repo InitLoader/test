@@ -44,6 +44,10 @@ public class AIHealth
     private static readonly FieldInfo FI_hasCharacter =
         typeof(Health).GetField("hasCharacter", BindingFlags.NonPublic | BindingFlags.Instance);
 
+    private static readonly FieldInfo FI_healthIsDead =
+        typeof(Health).GetField("isDead", BindingFlags.NonPublic | BindingFlags.Instance) ??
+        typeof(Health).GetField("_isDead", BindingFlags.NonPublic | BindingFlags.Instance);
+
     // 【优化】缓存反射方法，避免每次死亡都调用 AccessTools.DeclaredMethod
     private static readonly MethodInfo MI_GetActiveHealthBar;
     private static readonly MethodInfo MI_ReleaseHealthBar;
@@ -83,6 +87,22 @@ public class AIHealth
     private readonly Dictionary<int, float> _cliLastReportedHp = new();
     private readonly Dictionary<int, float> _cliNextReportAt = new();
     private readonly HashSet<int> _srvProcessedAiDeaths = new();
+    private static readonly HashSet<int> _scheduledDisable = new();
+
+    private static readonly System.Type T_BehaviourTreeOwner = AccessTools.TypeByName("NodeCanvas.Framework.BehaviourTreeOwner");
+    private static readonly System.Type T_FSMOwner = AccessTools.TypeByName("NodeCanvas.StateMachines.FSMOwner");
+    private static readonly System.Type T_Blackboard = AccessTools.TypeByName("NodeCanvas.Framework.Blackboard");
+    private static readonly System.Type T_AIPathControl = AccessTools.TypeByName("AI_PathControl") ??
+                                                         AccessTools.TypeByName("AIPathControl");
+    private static readonly System.Type T_AIPathController = AccessTools.TypeByName("AI_PathController") ??
+                                                             AccessTools.TypeByName("AIPathController");
+    private static readonly System.Type T_AIMoveControl = AccessTools.TypeByName("AIMoveControl") ??
+                                                          AccessTools.TypeByName("AI_MoveControl");
+    private static readonly System.Type T_AIStateControl = AccessTools.TypeByName("AIStateControl") ??
+                                                           AccessTools.TypeByName("AI_StateControl");
+    private static readonly System.Type T_AIWeaponControl = AccessTools.TypeByName("AIWeaponControl") ??
+                                                            AccessTools.TypeByName("AI_WeaponControl");
+    private static readonly System.Type T_MagicBlend = AccessTools.TypeByName("CharacterAnimationControl_MagicBlend");
 
     internal static bool IsCharacterMarkedDead(CharacterMainControl cmc)
     {
@@ -123,13 +143,13 @@ public class AIHealth
         return false;
     }
 
-    internal static void EnsureAiMovementStopped(CharacterMainControl cmc)
+    private static void MarkCharacterDead(CharacterMainControl cmc)
     {
         if (!cmc) return;
 
         try
         {
-            cmc.enabled = false;
+            FI_CmcIsDead?.SetValue(cmc, true);
         }
         catch
         {
@@ -137,25 +157,64 @@ public class AIHealth
 
         try
         {
-            var aiController = cmc.GetComponent<AICharacterController>();
-            if (aiController) aiController.enabled = false;
+            if (PI_CmcIsDead != null && PI_CmcIsDead.CanWrite)
+                PI_CmcIsDead.SetValue(cmc, true);
         }
         catch
         {
         }
+    }
+
+    private static void MarkHealthDead(Health health)
+    {
+        if (!health) return;
 
         try
         {
-            var follower = cmc.GetComponent<NetAiFollower>();
-            if (follower) follower.enabled = false;
+            FI_healthIsDead?.SetValue(health, true);
         }
         catch
         {
         }
+    }
+
+    private static void DisableBehaviourIfPresent(CharacterMainControl cmc, Behaviour behaviour)
+    {
+        if (!cmc || !behaviour) return;
 
         try
         {
-            var nav = cmc.GetComponent<NavMeshAgent>();
+            behaviour.enabled = false;
+        }
+        catch
+        {
+        }
+    }
+
+    private static void DisableBehaviourType(CharacterMainControl cmc, System.Type type)
+    {
+        if (!cmc || type == null) return;
+
+        try
+        {
+            var comps = cmc.GetComponentsInChildren(type, true);
+            foreach (var comp in comps)
+                if (comp is Behaviour behaviour)
+                    behaviour.enabled = false;
+        }
+        catch
+        {
+        }
+    }
+
+    private static void StopNavMesh(CharacterMainControl cmc)
+    {
+        if (!cmc) return;
+
+        try
+        {
+            var nav = cmc.GetComponent<NavMeshAgent>() ??
+                      cmc.GetComponentInChildren<NavMeshAgent>(true);
             if (nav)
             {
                 nav.isStopped = true;
@@ -169,7 +228,110 @@ public class AIHealth
 
         try
         {
-            var cc = cmc.GetComponent<CharacterController>();
+            var obstacle = cmc.GetComponent<NavMeshObstacle>() ??
+                           cmc.GetComponentInChildren<NavMeshObstacle>(true);
+            if (obstacle) obstacle.enabled = false;
+        }
+        catch
+        {
+        }
+    }
+
+    private static void DisableAnimator(CharacterMainControl cmc)
+    {
+        if (!cmc) return;
+
+        try
+        {
+            var animators = cmc.GetComponentsInChildren<Animator>(true);
+            foreach (var anim in animators)
+            {
+                if (!anim) continue;
+                anim.applyRootMotion = false;
+                anim.speed = 0f;
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static void ScheduleDisableAfterDeath(CharacterMainControl cmc)
+    {
+        if (!cmc) return;
+
+        var id = cmc.GetInstanceID();
+        if (!_scheduledDisable.Add(id)) return;
+
+        UniTask.Void(async () =>
+        {
+            try
+            {
+                await UniTask.Delay(150);
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                if (!cmc) return;
+
+                if (cmc.characterModel && cmc.characterModel.gameObject.activeSelf)
+                {
+                    cmc.characterModel.gameObject.SetActive(false);
+                    return;
+                }
+
+                if (cmc.gameObject.activeSelf)
+                    cmc.gameObject.SetActive(false);
+            }
+            catch
+            {
+            }
+        });
+    }
+
+    private void ApplyServerAuthoritativeKill(CharacterMainControl cmc, Health h, float applyMax, DamageInfo di)
+    {
+        if (!h) return;
+
+        try
+        {
+            HealthM.Instance?.ForceSetHealth(h, applyMax, 0f, false);
+        }
+        catch
+        {
+        }
+
+        MarkHealthDead(h);
+        MarkCharacterDead(cmc);
+
+        FireServerDeathCallbacks(cmc, di);
+    }
+
+    internal static void EnsureAiMovementStopped(CharacterMainControl cmc)
+    {
+        if (!cmc) return;
+
+        try
+        {
+            cmc.enabled = false;
+        }
+        catch
+        {
+        }
+
+        DisableBehaviourIfPresent(cmc, cmc.GetComponent<AICharacterController>());
+        DisableBehaviourIfPresent(cmc, cmc.GetComponentInChildren<AICharacterController>(true));
+        DisableBehaviourIfPresent(cmc, cmc.GetComponent<NetAiFollower>());
+
+        StopNavMesh(cmc);
+
+        try
+        {
+            var cc = cmc.GetComponent<CharacterController>() ??
+                     cmc.GetComponentInChildren<CharacterController>(true);
             if (cc) cc.enabled = false;
         }
         catch
@@ -178,7 +340,20 @@ public class AIHealth
 
         try
         {
-            var rb = cmc.GetComponent<Rigidbody>();
+            foreach (var collider in cmc.GetComponentsInChildren<Collider>(true))
+            {
+                if (!collider) continue;
+                if (!collider.isTrigger) collider.enabled = false;
+            }
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            var rb = cmc.GetComponent<Rigidbody>() ??
+                     cmc.GetComponentInChildren<Rigidbody>(true);
             if (rb)
             {
                 rb.velocity = Vector3.zero;
@@ -190,14 +365,22 @@ public class AIHealth
         {
         }
 
-        try
-        {
-            var anim = cmc.GetComponentInChildren<Animator>(true);
-            if (anim) anim.applyRootMotion = false;
-        }
-        catch
-        {
-        }
+        DisableAnimator(cmc);
+
+        DisableBehaviourType(cmc, T_BehaviourTreeOwner);
+        DisableBehaviourType(cmc, T_FSMOwner);
+        DisableBehaviourType(cmc, T_Blackboard);
+        DisableBehaviourType(cmc, T_AIPathControl);
+        DisableBehaviourType(cmc, T_AIPathController);
+        DisableBehaviourType(cmc, T_AIMoveControl);
+        DisableBehaviourType(cmc, T_AIStateControl);
+        DisableBehaviourType(cmc, T_AIWeaponControl);
+        DisableBehaviourType(cmc, T_MagicBlend);
+
+        MarkCharacterDead(cmc);
+        MarkHealthDead(cmc.Health);
+
+        ScheduleDisableAfterDeath(cmc);
     }
 
     private DamageInfo BuildServerKillDamageInfo(CharacterMainControl cmc, float applyMax, NetPeer sender)
@@ -431,17 +614,31 @@ public class AIHealth
             if (!wasDead || firstDeathReport)
             {
                 var di = BuildServerKillDamageInfo(cmc, applyMax, sender);
-                if (!TryKillViaHurt(h, di))
+                var killedViaHurt = TryKillViaHurt(h, di);
+                if (!killedViaHurt)
                 {
-                    HealthM.Instance.ForceSetHealth(h, applyMax, 0f, false);
-                    FireServerDeathCallbacks(cmc, di);
+                    ApplyServerAuthoritativeKill(cmc, h, applyMax, di);
+                }
+                else
+                {
+                    MarkHealthDead(h);
+                    MarkCharacterDead(cmc);
                 }
 
                 appliedCur = 0f;
             }
             else
             {
-                HealthM.Instance.ForceSetHealth(h, applyMax, 0f, false);
+                try
+                {
+                    HealthM.Instance?.ForceSetHealth(h, applyMax, 0f, false);
+                }
+                catch
+                {
+                }
+
+                MarkHealthDead(h);
+                MarkCharacterDead(cmc);
                 appliedCur = 0f;
             }
 
