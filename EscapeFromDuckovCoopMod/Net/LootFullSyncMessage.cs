@@ -515,7 +515,7 @@ public static class LootFullSyncMessage
                         try
                         {
                             if (inventory.GetItemAt(preferPos) == null)
-                                added = inventory.AddAt(item, preferPos);
+                                added = InventoryPlacementUtil.TryPlaceItemExact(inventory, item, preferPos);
                         }
                         catch
                         {
@@ -529,7 +529,7 @@ public static class LootFullSyncMessage
                     {
                         var empty = inventory.GetFirstEmptyPosition();
                         if (empty >= 0 && empty < inventory.Capacity)
-                            added = inventory.AddAt(item, empty);
+                            added = InventoryPlacementUtil.TryPlaceItemExact(inventory, item, empty);
                     }
                     catch
                     {

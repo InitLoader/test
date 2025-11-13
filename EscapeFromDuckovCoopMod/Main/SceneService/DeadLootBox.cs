@@ -116,7 +116,16 @@ public class DeadLootBox : MonoBehaviour
                 foreach (var (p, snap) in pack.Item2)
                 {
                     var item = ItemTool.BuildItemFromSnapshot(snap);
-                    if (item) inv.AddAt(item, p);
+                    if (item && !InventoryPlacementUtil.TryPlaceItemExact(inv, item, p))
+                    {
+                        try
+                        {
+                            Object.Destroy(item.gameObject);
+                        }
+                        catch
+                        {
+                        }
+                    }
                 }
             }
             finally

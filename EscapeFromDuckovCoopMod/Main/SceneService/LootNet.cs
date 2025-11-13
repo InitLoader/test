@@ -322,7 +322,16 @@ public class LootNet
                         continue;
                     }
 
-                    inv.AddAt(item, pos);
+                    if (!InventoryPlacementUtil.TryPlaceItemExact(inv, item, pos))
+                    {
+                        try
+                        {
+                            Object.Destroy(item.gameObject);
+                        }
+                        catch
+                        {
+                        }
+                    }
                 }
                 else
                 {
