@@ -238,15 +238,37 @@ public class AIHealth
         }
     }
 
-    private bool Server_TryMarkDeathHandled(int aiId)
+    private int Server_GetDeathHandleKey(int aiId, CharacterMainControl cmc)
     {
-        return _srvDeathHandled.Add(aiId);
+        if (aiId != 0) return aiId;
+
+        if (cmc != null)
+        {
+            try
+            {
+                var instId = cmc.GetInstanceID();
+                if (instId != 0) return -Mathf.Abs(instId);
+            }
+            catch
+            {
+            }
+        }
+
+        return int.MinValue;
+    }
+
+    private bool Server_TryMarkDeathHandled(int aiId, CharacterMainControl cmc)
+    {
+        var key = Server_GetDeathHandleKey(aiId, cmc);
+        if (key == int.MinValue) return true; // 缺少唯一 key 时直接处理但不去重
+
+        return _srvDeathHandled.Add(key);
     }
 
     private void Server_EnsureAiFullyDead(CharacterMainControl cmc, Health h, int aiId)
     {
         if (cmc == null || h == null) return;
-        if (!Server_TryMarkDeathHandled(aiId)) return;
+        if (!Server_TryMarkDeathHandled(aiId, cmc)) return;
 
         Server_DisableAiAfterDeath(cmc, h);
     }
@@ -329,7 +351,51 @@ public class AIHealth
             }
         }
 
-        var firstHandle = Server_TryMarkDeathHandled(aiId);
+        var firstHandle = Server_TryMarkDeathHandled(aiId, cmc);
+
+        if (firstHandle && networkStarted)
+        {
+            float broadcastMax = 0f;
+            float broadcastCur = 0f;
+
+            try
+            {
+                broadcastMax = h.MaxHealth;
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                broadcastCur = Mathf.Max(0f, h.CurrentHealth);
+            }
+            catch
+            {
+            }
+
+            if (broadcastCur <= 0f)
+            {
+                if (aiId == 0)
+                {
+                    var tag = ComponentCache.GetNetAiTag(cmc);
+                    if (tag != null) aiId = tag.aiId;
+
+                    if (aiId == 0)
+                    {
+                        foreach (var kv in AITool.aiById)
+                            if (kv.Value == cmc)
+                            {
+                                aiId = kv.Key;
+                                break;
+                            }
+                    }
+                }
+
+                if (aiId != 0)
+                    Server_BroadcastAiHealth(aiId, broadcastMax, broadcastCur);
+            }
+        }
 
         if (triggerEvents && firstHandle && di != null)
         {
