@@ -16,6 +16,7 @@
 
 using Duckov.UI;
 using EscapeFromDuckovCoopMod.Net;  // 引入智能发送扩展方法
+using System.Collections.Generic;
 using System.Reflection;
 
 namespace EscapeFromDuckovCoopMod;
@@ -67,6 +68,7 @@ public class AIHealth
     private readonly Dictionary<int, float> _cliLastAiHp = new();
     private readonly Dictionary<int, float> _cliLastReportedHp = new();
     private readonly Dictionary<int, float> _cliNextReportAt = new();
+    private readonly HashSet<int> _srvDeathHandled = new();
 
     // 🛡️ 日志频率限制
     private static int _pendingAiWarningCount = 0;
@@ -170,6 +172,11 @@ public class AIHealth
 
         Server_BroadcastAiHealth(aiId, applyMax, clampedCur);
 
+        if (clampedCur <= 0f)
+        {
+            Server_EnsureAiFullyDead(cmc, h, aiId);
+        }
+
         if (clampedCur <= 0f && !wasDead)
         {
             if (ModBehaviourF.LogAiHpDebug)
@@ -261,6 +268,65 @@ public class AIHealth
                 Debug.LogError($"[AI-HP][SERVER] TryFireOnDead failed for aiId={aiId}: {e}");
             }
         }
+    }
+
+
+    private void Server_EnsureAiFullyDead(CharacterMainControl cmc, Health h, int aiId)
+    {
+        if (cmc == null || h == null) return;
+        if (!_srvDeathHandled.Add(aiId)) return;
+
+        try
+        {
+            var ai = cmc.GetComponent<AICharacterController>();
+            if (ai) ai.enabled = false;
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            cmc.enabled = false;
+        }
+        catch
+        {
+        }
+
+        UniTask.Void(async () =>
+        {
+            try
+            {
+                await UniTask.Delay(50);
+
+                try
+                {
+                    var hb = MI_GetActiveHealthBar?.Invoke(HealthBarManager.Instance, new object[] { h }) as HealthBar;
+                    if (hb != null)
+                    {
+                        if (MI_ReleaseHealthBar != null)
+                            MI_ReleaseHealthBar.Invoke(hb, null);
+                        else
+                            hb.gameObject.SetActive(false);
+                    }
+                }
+                catch
+                {
+                }
+
+                try
+                {
+                    if (cmc != null)
+                        cmc.gameObject.SetActive(false);
+                }
+                catch
+                {
+                }
+            }
+            catch
+            {
+            }
+        });
     }
 
 
