@@ -217,21 +217,21 @@ public class DeadLootBox : MonoBehaviour
             // >>> 放在 writer.Reset() 之前 <<<
             if (inv != null)
             {
-                inv.NeedInspection = true;
+                inv.NeedInspection = false;
                 // 尝试把“这个箱子以前被搜过”的标记也清空（有的版本有这个字段）
                 try
                 {
-                    Traverse.Create(inv).Field<bool>("hasBeenInspectedInLootBox").Value = false;
+                    Traverse.Create(inv).Field<bool>("hasBeenInspectedInLootBox").Value = true;
                 }
                 catch
                 {
                 }
 
-                // 把当前内容全部标记为“未鉴定”
+                // 把当前内容全部标记为“已鉴定”
                 for (var i = 0; i < inv.Content.Count; ++i)
                 {
                     var it = inv.GetItemAt(i);
-                    if (it) it.Inspected = false;
+                    if (it) it.Inspected = true;
                 }
             }
 

@@ -792,25 +792,7 @@ internal static class Patch_Inventory_AddAt_FlagUninspected_WhenApplyingLoot
         if (LootboxDetectUtil.IsPrivateInventory(inv)) return;
         if (!(LootboxDetectUtil.IsLootboxInventory(inv) || LootManager.IsCurrentLootInv(inv))) return;
 
-        try
-        {
-            var last = inv.GetLastItemPosition();
-            var hasUninspected = false;
-            for (var i = 0; i <= last; i++)
-            {
-                var it = inv.GetItemAt(i);
-                if (it != null && !it.Inspected)
-                {
-                    hasUninspected = true;
-                    break;
-                }
-            }
-
-            inv.NeedInspection = hasUninspected;
-        }
-        catch
-        {
-        }
+        TryClearNeedInspection(inv);
     }
 }
 
@@ -832,21 +814,14 @@ internal static class Patch_Inventory_AddItem_FlagUninspected_WhenApplyingLoot
         if (LootboxDetectUtil.IsPrivateInventory(inv)) return;
         if (!(LootboxDetectUtil.IsLootboxInventory(inv) || LootManager.IsCurrentLootInv(inv))) return;
 
+        TryClearNeedInspection(inv);
+    }
+
+    private static void TryClearNeedInspection(Inventory inv)
+    {
         try
         {
-            var last = inv.GetLastItemPosition();
-            var hasUninspected = false;
-            for (var i = 0; i <= last; i++)
-            {
-                var it = inv.GetItemAt(i);
-                if (it != null && !it.Inspected)
-                {
-                    hasUninspected = true;
-                    break;
-                }
-            }
-
-            inv.NeedInspection = hasUninspected;
+            inv.NeedInspection = false;
         }
         catch
         {
